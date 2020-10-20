@@ -110,7 +110,10 @@ static asmlinkage void hooked_evdev_events(struct input_handle *handle,
             last_handle = handle; // save mouse
         }
 #else
-        if( vals[i].type != EV_KEY ){
+        if( vals[i].type == EV_REL && !last_handle){
+            last_handle = handle; // save mouse
+        }
+        if( vals[i].type != EV_KEY || vals[i].value > 1){
             continue;
         }
 #endif
@@ -146,7 +149,7 @@ static ssize_t mirror_read(struct file *file,
 {
     if( !fresh )
         return 0;
-
+    
     if( count < sizeof(struct input_value) ){
         kprint("ERROR: Userspace buffer smaller than input event!\n");
         return -EFAULT;
