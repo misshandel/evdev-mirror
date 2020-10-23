@@ -63,7 +63,10 @@ bool fresh = false;
 static struct ftrace_hook evdev_events_hook;
 static struct input_handle *last_handle = 0;
 
-
+struct input_value user_array[1024];
+spinlock_t array_lock;
+int user_count = 0;
+spinlock_t count_lock;
 
 static int init_hook( struct ftrace_hook *hook )
 {
@@ -100,6 +103,7 @@ static asmlinkage void hooked_evdev_events(struct input_handle *handle,
                                            unsigned int count)
 {
     int i;
+    int n = 0;
     for( i = 0; i < count; i++ ){
 #ifdef OUTPUT_MOUSE_EVENTS
         /* We don't care about anything except for keypresses/mouse/touchpad */
@@ -117,11 +121,18 @@ static asmlinkage void hooked_evdev_events(struct input_handle *handle,
             continue;
         }
 #endif
-        spin_lock(&input_lock); // This could cause small input lag? Maybe add a buffer
+        /*spin_lock(&input_lock); // This could cause small input lag? Maybe add a buffer
         last_event = vals[i];
         fresh = true;
-        spin_unlock(&input_lock);
-        //kprint("Event #(%d): type: %d - code: %d - value: %d\n", i, vals[i].type, vals[i].code, vals[i].value);
+        spin_unlock(&input_lock);*/
+        user_array[user_count] = vals[i];
+        n++;
+        user_count += n;
+
+        if(user_count > 1024 || user_count < 0) {
+            user_count = 0;
+        }
+        kprint("Event #(%d): type: %d - code: %d - value: %d\n", i, vals[i].type, vals[i].code, vals[i].value);
     }
     orig_evdev_events( handle, vals, count );
 }
@@ -147,23 +158,46 @@ static ssize_t mirror_read(struct file *file,
                            size_t count,
                            loff_t *ppos)
 {
-    if( !fresh )
+    /*if( !fresh )
         return 0;
+    */
     
+    if(user_count > 128 || user_count < 0) {
+        user_count = 0;
+    }
+
+    if(!user_count) {
+            return -EFAULT;
+    }
     if( count < sizeof(struct input_value) ){
         kprint("ERROR: Userspace buffer smaller than input event!\n");
         return -EFAULT;
     }
 
-    spin_lock(&input_lock);
-    //kprint("mirror_read: input code: (%d/%ld)\n", last_event.code, sizeof(struct input_value));
-    if( copy_to_user(user_buffer, &last_event, sizeof(struct input_value)) ){
+    // spin_lock(&input_lock);
+    
+    struct input_value event;
+    event = user_array[0];
+    int i = 0;
+    for(i = 0; i < user_count; i++) {
+        if(i+1 <= user_count) {
+            user_array[i] = user_array[i+1];
+        }
+    }
+    
+    if(user_count > 0) {
+     
+    user_count--;
+    }
+
+    kprint("mirror_read: input code: (%d/%ld)\n", event.code, sizeof(struct input_value));
+    if( copy_to_user(user_buffer, &event, sizeof(struct input_value)) ){
         kprint("ERROR: Copying to User failed\n");
         return -EFAULT;
     }
 
-    fresh = false;
-    spin_unlock(&input_lock);
+    // fresh = false;
+    // spin_unlock(&input_lock);
 
     return sizeof(struct input_value);
 }
