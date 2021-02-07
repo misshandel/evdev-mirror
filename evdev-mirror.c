@@ -13,6 +13,7 @@
 #include <linux/cdev.h>
 #include <linux/mutex.h>
 #include <asm/spinlock.h>
+#include <linux/kprobes.h> 
 
 MODULE_DESCRIPTION("");
 MODULE_AUTHOR("");
@@ -77,6 +78,19 @@ static int init_hook( struct ftrace_hook *hook )
 #endif
 
     return 0;
+}
+
+
+// Credit to: Filip Pynckels - MIT/GPL dual (http://users.telenet.be/pynckels/2020-2-Linux-kernel-unexported-kallsyms-functions.pdf)
+unsigned long lookup_name( const char *name ){
+    struct kprobe kp;
+    unsigned long retval;
+
+    kp.symbol_name = name;
+    if (register_kprobe(&kp) < 0) return 0;
+    retval = (unsigned long)kp.addr;
+    unregister_kprobe(&kp);
+    return retval;
 }
 
 static void notrace ftrace_thunk(unsigned long ip,
@@ -239,8 +253,10 @@ static void mirrordev_release(struct device *dev)
 static int startup(void)
 {
 
-    if( !kallsyms_on_each_symbol( on_symbol__evdev_events, "evdev_events" ) ){
-        kprint( "Error iterating through modules!\n" );
+    evdev_events_hook.name = "evdev_events";
+    evdev_events_hook.address = lookup_name( "evdev_events" );
+    if( !evdev_events_hook.address ){
+        kprint( "Error getting evdev_events addr! (%p)\n", evdev_events_hook.address );
         return -EAGAIN;
     }
 
