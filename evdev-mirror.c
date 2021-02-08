@@ -13,14 +13,11 @@
 #include <linux/cdev.h>
 #include <linux/mutex.h>
 #include <asm/spinlock.h>
-#include <linux/kprobes.h>
+#include <linux/kprobes.h> 
 
-#include "kallsyms.h"
-
-MODULE_DESCRIPTION("Mirror evdev events to a file.");
-MODULE_AUTHOR("LWSS/Heep");
+MODULE_DESCRIPTION("EVDEV-MIRROR");
+MODULE_AUTHOR("LWSS");
 MODULE_LICENSE("GPL");
-MODULE_INFO(livepatch, "Y");
 
 //#define OUTPUT_MOUSE_EVENTS 1
 
@@ -83,6 +80,19 @@ static int init_hook( struct ftrace_hook *hook )
     return 0;
 }
 
+
+// Credit to: Filip Pynckels - MIT/GPL dual (http://users.telenet.be/pynckels/2020-2-Linux-kernel-unexported-kallsyms-functions.pdf)
+unsigned long lookup_name( const char *name ){
+    struct kprobe kp;
+    unsigned long retval;
+
+    kp.symbol_name = name;
+    if (register_kprobe(&kp) < 0) return 0;
+    retval = (unsigned long)kp.addr;
+    unregister_kprobe(&kp);
+    return retval;
+}
+
 static void notrace ftrace_thunk(unsigned long ip,
                                  unsigned long parent_ip,
                                  struct ftrace_ops *ops,
@@ -141,6 +151,22 @@ static asmlinkage void hooked_evdev_events(struct input_handle *handle,
     }
     orig_evdev_events( handle, vals, count );
 }
+
+/* Called with symbols containing "evdev_events". Some contain version specific suffixes */
+static int on_symbol__evdev_events(void *data,
+                                   const char *name,
+                                   struct module *module,
+                                   unsigned long address)
+{
+    if( !strcmp( name, "evdev_events" ) ){
+        evdev_events_hook.name = name;
+        evdev_events_hook.address = address;
+        return 1; // non-zero stops iteration.
+    }
+
+    return 0;
+}
+
 
 static ssize_t mirror_read(struct file *file,
                            char *user_buffer,
@@ -226,13 +252,9 @@ static void mirrordev_release(struct device *dev)
 
 static int startup(void)
 {
-    if( init_kallsyms() ){
-        kprint( "Error initing kallsyms hack.\n" );
-        return -EAGAIN;
-    }
 
     evdev_events_hook.name = "evdev_events";
-    evdev_events_hook.address = kallsyms_lookup_name( "evdev_events" );
+    evdev_events_hook.address = lookup_name( "evdev_events" );
     if( !evdev_events_hook.address ){
         kprint( "Error getting evdev_events addr! (%p)\n", evdev_events_hook.address );
         return -EAGAIN;
